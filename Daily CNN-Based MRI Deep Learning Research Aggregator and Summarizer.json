@@ -1,0 +1,847 @@
+{
+  "name": "Daily CNN-Based MRI Deep Learning Research Aggregator and Summarizer",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "9d7a0171-8a98-4e8b-b6f8-dae49f1225ff",
+      "name": "Daily Trigger at 08:00 EST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        24896,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "daysBack",
+              "value": 14,
+              "type": "number"
+            },
+            {
+              "id": "id-2",
+              "name": "searchTerms",
+              "value": "MRI OR magnetic resonance imaging AND (CNN OR convolutional neural network OR deep learning) AND medical imaging",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "4e506c2c-c85f-45af-b192-372ba17fcc6f",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        25120,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "apiSources",
+              "value": "[{\"name\": \"pubmed\", \"url\": \"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi\"}, {\"name\": \"arxiv\", \"url\": \"http://export.arxiv.org/api/query\"}, {\"name\": \"crossref\", \"url\": \"https://api.crossref.org/works\"}]",
+              "type": "array"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "2f1de230-8803-412d-ab59-09263e4a977c",
+      "name": "Prepare API Sources",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        25344,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "apiSources",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "id": "96ace9a5-a8fd-4b2b-ab8d-f3e06b40d9b2",
+      "name": "Split API Sources",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        25568,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiSources.url }}?db=pubmed&term={{ encodeURIComponent($('Workflow Configuration').first().json.searchTerms) }}&retmax=5&retmode=xml&datetype=pdat&reldate={{ $('Workflow Configuration').first().json.daysBack }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "e1c1d0d4-ef07-4811-8d44-aeb4cd863572",
+      "name": "Query PubMed API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        25792,
+        6736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse PubMed XML response and extract paper information\nconst items = $input.all();\nconst papers = [];\n\nfor (const item of items) {\n  try {\n    const xmlData = item.json.data || item.json.body || item.json;\n    \n    // Parse XML string if needed\n    let xmlString = typeof xmlData === 'string' ? xmlData : JSON.stringify(xmlData);\n    \n    // Extract articles from PubMed XML\n    const articleMatches = xmlString.matchAll(/<PubmedArticle>(.*?)<\\/PubmedArticle>/gs);\n    \n    for (const articleMatch of articleMatches) {\n      const article = articleMatch[1];\n      \n      // Extract title\n      const titleMatch = article.match(/<ArticleTitle>(.*?)<\\/ArticleTitle>/s);\n      const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : '';\n      \n      // Extract abstract\n      const abstractMatch = article.match(/<Abstract>(.*?)<\\/Abstract>/s);\n      let abstract = '';\n      if (abstractMatch) {\n        const abstractTexts = abstractMatch[1].matchAll(/<AbstractText[^>]*>(.*?)<\\/AbstractText>/gs);\n        const abstractParts = [];\n        for (const abstractText of abstractTexts) {\n          abstractParts.push(abstractText[1].replace(/<[^>]*>/g, '').trim());\n        }\n        abstract = abstractParts.join(' ');\n      }\n      \n      // Extract authors\n      const authors = [];\n      const authorMatches = article.matchAll(/<Author[^>]*>(.*?)<\\/Author>/gs);\n      for (const authorMatch of authorMatches) {\n        const authorData = authorMatch[1];\n        const lastNameMatch = authorData.match(/<LastName>(.*?)<\\/LastName>/);\n        const foreNameMatch = authorData.match(/<ForeName>(.*?)<\\/ForeName>/);\n        if (lastNameMatch) {\n          const lastName = lastNameMatch[1];\n          const foreName = foreNameMatch ? foreNameMatch[1] : '';\n          authors.push(`${foreName} ${lastName}`.trim());\n        }\n      }\n      \n      // Extract DOI\n      let doi = '';\n      const doiMatch = article.match(/<ArticleId IdType=\"doi\">(.*?)<\\/ArticleId>/);\n      if (doiMatch) {\n        doi = doiMatch[1];\n      }\n      \n      // Extract PMID for link\n      let pmid = '';\n      const pmidMatch = article.match(/<PMID[^>]*>(.*?)<\\/PMID>/);\n      if (pmidMatch) {\n        pmid = pmidMatch[1];\n      }\n      const link = pmid ? `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` : '';\n      \n      // Extract publication date\n      let publicationDate = '';\n      const pubDateMatch = article.match(/<PubDate>(.*?)<\\/PubDate>/s);\n      if (pubDateMatch) {\n        const yearMatch = pubDateMatch[1].match(/<Year>(.*?)<\\/Year>/);\n        const monthMatch = pubDateMatch[1].match(/<Month>(.*?)<\\/Month>/);\n        const dayMatch = pubDateMatch[1].match(/<Day>(.*?)<\\/Day>/);\n        const year = yearMatch ? yearMatch[1] : '';\n        const month = monthMatch ? monthMatch[1] : '01';\n        const day = dayMatch ? dayMatch[1] : '01';\n        if (year) {\n          publicationDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;\n        }\n      }\n      \n      // Extract journal name\n      let journalName = '';\n      const journalMatch = article.match(/<Title>(.*?)<\\/Title>/);\n      if (journalMatch) {\n        journalName = journalMatch[1].replace(/<[^>]*>/g, '').trim();\n      }\n      \n      // Extract keywords\n      const keywords = [];\n      const keywordMatches = article.matchAll(/<Keyword[^>]*>(.*?)<\\/Keyword>/gs);\n      for (const keywordMatch of keywordMatches) {\n        keywords.push(keywordMatch[1].replace(/<[^>]*>/g, '').trim());\n      }\n      \n      // Also extract MeSH terms as keywords\n      const meshMatches = article.matchAll(/<DescriptorName[^>]*>(.*?)<\\/DescriptorName>/gs);\n      for (const meshMatch of meshMatches) {\n        keywords.push(meshMatch[1].replace(/<[^>]*>/g, '').trim());\n      }\n      \n      if (title) {\n        papers.push({\n          title,\n          abstract,\n          authors,\n          doi,\n          publicationDate,\n          journalName,\n          link,\n          keywords,\n          source: 'PubMed'\n        });\n      }\n    }\n  } catch (error) {\n    console.error('Error parsing PubMed XML:', error);\n  }\n}\n\nreturn papers.map(paper => ({ json: paper }));"
+      },
+      "id": "216c2fdb-5a67-4deb-b889-a2077b19a73c",
+      "name": "Parse PubMed XML Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        26016,
+        6736
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiSources.url }}?search_query={{ encodeURIComponent('all:' + $('Workflow Configuration').first().json.searchTerms) }}&start=0&max_results=5&sortBy=submittedDate&sortOrder=descending",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "f427307c-b00d-4cfb-8fbe-ebb354a34590",
+      "name": "Query arXiv API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        25792,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse arXiv XML response and extract paper information\nconst items = $input.all();\nconst papers = [];\n\nfor (const item of items) {\n  try {\n    const xmlData = item.json.data || item.json.body || item.json;\n    \n    // Parse XML string if needed\n    let xmlString = typeof xmlData === 'string' ? xmlData : JSON.stringify(xmlData);\n    \n    // Extract entries from arXiv XML\n    const entryMatches = xmlString.matchAll(/<entry>(.*?)<\\/entry>/gs);\n    \n    for (const entryMatch of entryMatches) {\n      const entry = entryMatch[1];\n      \n      // Extract title\n      const titleMatch = entry.match(/<title>(.*?)<\\/title>/s);\n      const title = titleMatch ? titleMatch[1].replace(/\\n/g, ' ').trim() : '';\n      \n      // Extract abstract/summary\n      const summaryMatch = entry.match(/<summary>(.*?)<\\/summary>/s);\n      const abstract = summaryMatch ? summaryMatch[1].replace(/\\n/g, ' ').trim() : '';\n      \n      // Extract authors\n      const authors = [];\n      const authorMatches = entry.matchAll(/<author>(.*?)<\\/author>/gs);\n      for (const authorMatch of authorMatches) {\n        const authorData = authorMatch[1];\n        const nameMatch = authorData.match(/<name>(.*?)<\\/name>/);\n        if (nameMatch) {\n          authors.push(nameMatch[1].trim());\n        }\n      }\n      \n      // Extract arXiv ID and create DOI\n      let doi = '';\n      let link = '';\n      const idMatch = entry.match(/<id>(.*?)<\\/id>/);\n      if (idMatch) {\n        link = idMatch[1].trim();\n        const arxivId = link.split('/').pop();\n        doi = `arXiv:${arxivId}`;\n      }\n      \n      // Extract PDF link\n      const linkMatches = entry.matchAll(/<link[^>]*title=\"pdf\"[^>]*href=\"([^\"]+)\"/g);\n      for (const linkMatch of linkMatches) {\n        link = linkMatch[1];\n        break;\n      }\n      \n      // If no PDF link found, try to get any link\n      if (!link) {\n        const anyLinkMatch = entry.match(/<link[^>]*href=\"([^\"]+)\"/);\n        if (anyLinkMatch) {\n          link = anyLinkMatch[1];\n        }\n      }\n      \n      // Extract publication date\n      let publicationDate = '';\n      const publishedMatch = entry.match(/<published>(.*?)<\\/published>/);\n      if (publishedMatch) {\n        publicationDate = publishedMatch[1].trim();\n      } else {\n        const updatedMatch = entry.match(/<updated>(.*?)<\\/updated>/);\n        if (updatedMatch) {\n          publicationDate = updatedMatch[1].trim();\n        }\n      }\n      \n      // Extract keywords/categories\n      const keywords = [];\n      const categoryMatches = entry.matchAll(/<category[^>]*term=\"([^\"]+)\"/g);\n      for (const categoryMatch of categoryMatches) {\n        keywords.push(categoryMatch[1]);\n      }\n      \n      if (title) {\n        papers.push({\n          title,\n          abstract,\n          authors,\n          doi,\n          publicationDate,\n          journalName: 'arXiv',\n          link,\n          keywords,\n          source: 'arXiv'\n        });\n      }\n    }\n  } catch (error) {\n    console.error('Error parsing arXiv XML:', error);\n  }\n}\n\nreturn papers.map(paper => ({ json: paper }));"
+      },
+      "id": "3b22b78d-18b3-4018-b393-e9b7c648b54b",
+      "name": "Parse arXiv XML Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        26016,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.apiSources.url }}?query={{ encodeURIComponent($('Workflow Configuration').first().json.searchTerms) }}&filter=from-pub-date:{{ $now.minus({ days: $('Workflow Configuration').first().json.daysBack }).toFormat('yyyy-MM-dd') }}&rows=5&select=DOI,title,author,abstract,published,container-title,link",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "b871d501-aa56-4312-8fe8-31833cf1ef9e",
+      "name": "Query CrossRef API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        25792,
+        7120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse CrossRef JSON response and extract paper metadata\nconst items = $input.all();\nconst papers = [];\n\nfor (const item of items) {\n  try {\n    const responseData = item.json.data || item.json.body || item.json;\n    \n    // Parse JSON string if needed\n    let jsonData;\n    if (typeof responseData === 'string') {\n      jsonData = JSON.parse(responseData);\n    } else {\n      jsonData = responseData;\n    }\n    \n    // Access items with optional chaining to prevent undefined errors\n    const crossrefItems = jsonData?.message?.items || [];\n    \n    for (const crossrefItem of crossrefItems) {\n      // Extract title\n      const title = crossrefItem.title && crossrefItem.title[0] ? crossrefItem.title[0] : '';\n      \n      // Extract abstract\n      const abstract = crossrefItem.abstract || '';\n      \n      // Extract authors\n      const authors = (crossrefItem.author || []).map(author => {\n        const given = author.given || '';\n        const family = author.family || '';\n        return `${given} ${family}`.trim();\n      }).filter(name => name.length > 0);\n\n      // Extract DOI\n      const doi = crossrefItem.DOI || '';\n      \n      // Extract publication date\n      let publicationDate = '';\n      if (crossrefItem.published && crossrefItem.published['date-parts'] && crossrefItem.published['date-parts'][0]) {\n        const dateParts = crossrefItem.published['date-parts'][0];\n        const year = dateParts[0] || '';\n        const month = dateParts[1] ? String(dateParts[1]).padStart(2, '0') : '01';\n        const day = dateParts[2] ? String(dateParts[2]).padStart(2, '0') : '01';\n        publicationDate = `${year}-${month}-${day}`;\n      } else if (crossrefItem['published-print'] && crossrefItem['published-print']['date-parts'] && crossrefItem['published-print']['date-parts'][0]) {\n        const dateParts = crossrefItem['published-print']['date-parts'][0];\n        const year = dateParts[0] || '';\n        const month = dateParts[1] ? String(dateParts[1]).padStart(2, '0') : '01';\n        const day = dateParts[2] ? String(dateParts[2]).padStart(2, '0') : '01';\n        publicationDate = `${year}-${month}-${day}`;\n      } else if (crossrefItem['published-online'] && crossrefItem['published-online']['date-parts'] && crossrefItem['published-online']['date-parts'][0]) {\n        const dateParts = crossrefItem['published-online']['date-parts'][0];\n        const year = dateParts[0] || '';\n        const month = dateParts[1] ? String(dateParts[1]).padStart(2, '0') : '01';\n        const day = dateParts[2] ? String(dateParts[2]).padStart(2, '0') : '01';\n        publicationDate = `${year}-${month}-${day}`;\n      }\n\n      // Extract journal name\n      const journalName = (crossrefItem['container-title'] && crossrefItem['container-title'][0]) || '';\n\n      // Extract keywords/subjects\n      const keywords = crossrefItem.subject || [];\n\n      // Build link - prefer URL, fallback to DOI link\n      const link = crossrefItem.URL || (crossrefItem.DOI ? `https://doi.org/${crossrefItem.DOI}` : '');\n\n      // Only add papers with at least a title\n      if (title) {\n        papers.push({\n          title: title,\n          abstract: abstract,\n          authors: authors,\n          doi: doi,\n          publicationDate: publicationDate,\n          journalName: journalName,\n          link: link,\n          keywords: keywords,\n          source: 'CrossRef'\n        });\n      }\n    }\n  } catch (error) {\n    console.error('Error parsing CrossRef JSON:', error);\n  }\n}\n\nreturn papers.map(paper => ({ json: paper }));"
+      },
+      "id": "9a87fb6e-9e8f-4340-8812-04b9cbe44594",
+      "name": "Parse CrossRef JSON Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        26016,
+        7120
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "6be2866c-fe8f-4fca-837a-274421e0398c",
+      "name": "Merge All Papers",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        26240,
+        6912
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.title + ' ' + $json.abstract }}",
+              "rightValue": "MRI",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "id-2",
+              "leftValue": "={{ $json.title + ' ' + $json.abstract }}",
+              "rightValue": "magnetic resonance imaging",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "id-3",
+              "leftValue": "={{ $json.title + ' ' + $json.abstract }}",
+              "rightValue": "CNN",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "id-4",
+              "leftValue": "={{ $json.title + ' ' + $json.abstract }}",
+              "rightValue": "convolutional neural network",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "id-5",
+              "leftValue": "={{ $json.title + ' ' + $json.abstract }}",
+              "rightValue": "deep learning",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "f51aea3a-4b88-4e92-b1d3-1e4b69e582bf",
+      "name": "Filter MRI + CNN Papers",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        26464,
+        6928
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.link }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "file",
+              "outputPropertyName": "pdfData"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "659ddb15-0024-4242-a389-2637cf12e3f3",
+      "name": "Download PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        26688,
+        6832
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "pdfData",
+        "options": {}
+      },
+      "id": "dcd724c6-656b-4315-890e-3d08d3ce9823",
+      "name": "Extract Text from PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        27136,
+        6768
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "id-1",
+              "name": "fullText",
+              "value": "={{ $json.text || $json.abstract || 'No text available' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "1e3c335a-8c50-47f0-b03b-e6501946594c",
+      "name": "Prepare Text for AI",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        27360,
+        6832
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "16ZnplRQV6XApN4DizoLZpedNhwNVLdv5wUbpYCijXcc",
+          "mode": "list",
+          "cachedResultName": "MRI CNN Research Errors - 2025-12-13 20:41:36",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16ZnplRQV6XApN4DizoLZpedNhwNVLdv5wUbpYCijXcc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/16ZnplRQV6XApN4DizoLZpedNhwNVLdv5wUbpYCijXcc/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "abstract",
+              "displayName": "abstract",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "authors",
+              "displayName": "authors",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "doi",
+              "displayName": "doi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "publicationDate",
+              "displayName": "publicationDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "journalName",
+              "displayName": "journalName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "keywords",
+              "displayName": "keywords",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "fullText",
+              "displayName": "fullText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "1854e62f-4c2d-4d35-a00b-ebe7c911cbba",
+      "name": "Store in Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        27584,
+        6832
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gHOXO1pZMMBnd1DI",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1aUhfeiXUzrcgfjkbozSmo4pWxTITmI4mMAuJ-S3lIZk",
+          "mode": "list",
+          "cachedResultName": "MRI CNN Research Errors - 2025-12-13 20:40:22",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1aUhfeiXUzrcgfjkbozSmo4pWxTITmI4mMAuJ-S3lIZk/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1aUhfeiXUzrcgfjkbozSmo4pWxTITmI4mMAuJ-S3lIZk/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "4a3a350a-16a9-46eb-b936-28e08ab19e63",
+      "name": "Log Errors to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        26688,
+        7024
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gHOXO1pZMMBnd1DI",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "ba43e926-f14d-4ed6-8da6-c92dd6675c47",
+      "name": "Aggregate Papers for Notification",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        27808,
+        6832
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "U0A3F04LFMJ",
+          "mode": "list",
+          "cachedResultName": "prabhusarveshs"
+        },
+        "text": "=New MRI + CNN Research Papers ({{ $json.data.length }})\n\nSummary of papers processed today:\n{{ $json.data.map(p => `• ${p.title} (${p.source})`).join('\\n') }}",
+        "otherOptions": {}
+      },
+      "id": "91d59d4d-5432-497b-b204-8b107006b88f",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        28032,
+        6832
+      ],
+      "webhookId": "544b92f2-4f9b-4c77-9f07-84cec494b9b2",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "YWfFPt5qPJMSfLwV",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "id-1",
+              "leftValue": "={{ $json.pdfData }}",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "e8cd68c1-92c7-4f6d-975a-d10bd02cb56c",
+      "name": "Check PDF Download Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        26912,
+        6832
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger at 08:00 EST": {
+      "main": [
+        [
+          {
+            "node": "Workflow Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Configuration": {
+      "main": [
+        [
+          {
+            "node": "Prepare API Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare API Sources": {
+      "main": [
+        [
+          {
+            "node": "Split API Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split API Sources": {
+      "main": [
+        [
+          {
+            "node": "Query PubMed API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query arXiv API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query CrossRef API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query PubMed API": {
+      "main": [
+        [
+          {
+            "node": "Parse PubMed XML Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query arXiv API": {
+      "main": [
+        [
+          {
+            "node": "Parse arXiv XML Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query CrossRef API": {
+      "main": [
+        [
+          {
+            "node": "Parse CrossRef JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse PubMed XML Response": {
+      "main": [
+        [
+          {
+            "node": "Merge All Papers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse arXiv XML Response": {
+      "main": [
+        [
+          {
+            "node": "Merge All Papers",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse CrossRef JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Merge All Papers",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All Papers": {
+      "main": [
+        [
+          {
+            "node": "Filter MRI + CNN Papers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter MRI + CNN Papers": {
+      "main": [
+        [
+          {
+            "node": "Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Errors to Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from PDF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Text for AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Papers for Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Papers for Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF": {
+      "main": [
+        [
+          {
+            "node": "Check PDF Download Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check PDF Download Success": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Text for AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Text for AI": {
+      "main": [
+        [
+          {
+            "node": "Store in Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "eb73ca97-4a9f-4871-991a-f38843c341b8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5b992fac98871a2c19e2d680a0db487e1845035fc1e860fe024a50128c33578a"
+  },
+  "id": "4sQg0AOaSinft3Kw",
+  "tags": []
+}
